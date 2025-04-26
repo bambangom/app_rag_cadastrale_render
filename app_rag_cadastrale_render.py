@@ -39,7 +39,7 @@ if uploaded_files:
 
                 # Requête vers OpenAI Vision
                 response = client.chat.completions.create(
-                    model="gpt-4-vision-preview",
+                    model="gpt-4o",
                     messages=[
                         {
                             "role": "system",

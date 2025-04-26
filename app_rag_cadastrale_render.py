@@ -1,11 +1,20 @@
 # 📄 app_rag_cadastrale_render.py
 
-import streamlit as st
 import pandas as pd
 from PIL import Image
 import openai
 import io
 import os
+import streamlit as st
+
+st.set_page_config(
+    page_title="IA Cadastrale RAG",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ⚡ Correction spéciale Render
+st.write("")  # force render à générer les fichiers statiques correctement
 
 # 📌 Configuration de la page
 st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")

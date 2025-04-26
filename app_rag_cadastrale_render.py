@@ -33,7 +33,8 @@ def analyze_image_with_openai(image_file, image_name):
         image_bytes = image_file.read()
         encoded_image = base64.b64encode(image_bytes).decode('utf-8')
 
-        url = "https://api.openai.com/v1/chat/completions"
+        url = "https://api.openai.com/v1/chat/completions"  # ✅ Corrigé
+
 
         headers = {
             "Authorization": f"Bearer {OPENAI_API_KEY}",

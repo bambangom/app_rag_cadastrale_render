@@ -1,78 +1,96 @@
-import os
-import tempfile
 import streamlit as st
 import pandas as pd
-from PIL import Image
 import openai
+import base64
+import os
+from PIL import Image
+from io import BytesIO
 
-# 📌 Configuration Streamlit (toujours en premier !)
+# 📌 Configuration de la page
 st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")
-st.title("📊 IA Cadastrale RAG - Analyse Immeubles et Catégorisation Décret 2010-439")
+st.title("🏢 IA Cadastrale RAG - Analyse Automatique d'Images")
 
-# 📂 Clé API OpenAI (venant de ton .env ou config Render)
+# 📌 Clé API OpenAI
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# 📂 Upload du fichier
-uploaded_file = st.file_uploader("📥 Charger un fichier Excel (.xlsx/.csv) ou une image (.png/.jpg)", type=["xlsx", "csv", "png", "jpg", "jpeg"])
+# 📂 Upload multiple d'images
+uploaded_files = st.file_uploader("📥 Charger une ou plusieurs images", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
-if uploaded_file is not None:
-    st.success("✅ Fichier chargé avec succès")
+# 📋 DataFrame pour enregistrer les résultats
+results = []
 
-    if uploaded_file.name.endswith((".xlsx", ".csv")):
+def analyser_image_vision(file_bytes):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4-vision-preview",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Analyse l'image et donne :\n"
+                                "- Type d'immeuble : 'Individuel' ou 'Collectif'\n"
+                                "- Nombre d'étages (RDC=0, R+1=1, R+2=2, etc.)\n"
+                                "- Catégorie cadastrale : pour 'Individuel' choisis parmi [1,2,3,4] ; pour 'Collectif' choisis parmi [A,B,C,D]\n"
+                                "- Une observation rapide sur le standing et l'état du bâtiment\n"
+                                "Sois concis, professionnel et structuré."
+                            )
+                        },
+                        {
+                            "type": "image",
+                            "image": {
+                                "data": base64.b64encode(file_bytes).decode('utf-8')
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=1000,
+        )
+        return response['choices'][0]['message']['content']
+    except Exception as e:
+        return f"❌ Erreur OpenAI Vision : {str(e)}"
+
+# 📊 Traitement des images uploadées
+if uploaded_files:
+    st.success(f"✅ {len(uploaded_files)} image(s) chargée(s)")
+
+    for uploaded_file in uploaded_files:
         try:
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
+            # Lire l'image
+            image_bytes = uploaded_file.read()
+            image = Image.open(BytesIO(image_bytes))
+            
+            # Afficher l'image
+            st.image(image, caption=uploaded_file.name, use_column_width=True)
 
-            st.subheader("📄 Aperçu du fichier")
-            st.dataframe(df)
+            # 📤 Envoyer à OpenAI Vision pour analyse
+            st.info(f"🔎 Analyse IA de : {uploaded_file.name} ...")
+            result_text = analyser_image_vision(image_bytes)
+
+            # Afficher le résultat brut
+            st.code(result_text, language='markdown')
+
+            # Sauvegarder pour DataFrame
+            results.append({
+                "Nom du fichier": uploaded_file.name,
+                "Analyse IA": result_text
+            })
 
         except Exception as e:
-            st.error(f"❌ Erreur lors de la lecture du fichier : {e}")
+            st.error(f"Erreur lors du traitement de l'image {uploaded_file.name} : {e}")
 
-    elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
-        try:
-            # 📂 Sauvegarder temporairement l'image uploadée
-            temp_dir = tempfile.gettempdir()
-            temp_path = os.path.join(temp_dir, uploaded_file.name)
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+# 📥 Télécharger les résultats
+if results:
+    df_results = pd.DataFrame(results)
+    st.subheader("📄 Résultats complets")
+    st.dataframe(df_results)
 
-            # 📷 Afficher l'image
-            image = Image.open(uploaded_file)
-            st.image(image, caption="🖼️ Image chargée", use_column_width=True)
-
-            # 📋 Demander à l'utilisateur une description rapide (facultatif mais utile pour contextualiser)
-            description = st.text_area("✏️ Décrire brièvement l'image (ex: maison moderne, immeuble ancien, etc.)")
-
-            if st.button("🔍 Lancer l'analyse IA"):
-                with st.spinner("⏳ Analyse de l'image en cours avec OpenAI Vision..."):
-
-                    with open(temp_path, "rb") as file:
-                        response = openai.chat.completions.create(
-                            model="gpt-4-vision-preview",
-                            messages=[
-                                {"role": "user", "content": [
-                                    {"type": "text", "text": f"""Voici la description utilisateur : {description}.
-
-À partir de l'image suivante :
-- Décris le type de bâtiment : maison individuelle ou immeuble collectif.
-- Estime le nombre de niveaux visibles.
-- Classe la construction selon le décret 2010-439 :
-    - Pour maisons individuelles ➔ Catégorie 1, 2, 3, etc.
-    - Pour immeubles collectifs ➔ Catégorie A, B, C, etc.
-- Donne une synthèse : état apparent, standing des matériaux, état d'entretien.
-"""},
-                                    {"type": "image_file", "image_file": {"file": file}},
-                                ]}
-                            ],
-                            max_tokens=600,
-                        )
-
-                    # 📋 Résultats affichés
-                    st.success("✅ Analyse terminée")
-                    st.json(response.model_dump())
-
-        except Exception as e:
-            st.error(f"❌ Erreur OpenAI Vision : {e}")
+    st.download_button(
+        label="📥 Télécharger les résultats en CSV",
+        data=df_results.to_csv(index=False).encode('utf-8'),
+        file_name="resultats_analyse_cadastrale.csv",
+        mime="text/csv"
+    )

@@ -1,2 +1,30 @@
+# Ignorer environnement virtuel
 .venv/
+env/
+
+# Ignorer fichiers Python inutiles
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignorer config privée
+.env
+*.sqlite3
+db.sqlite3
+
+# Ignorer outputs
+export/
+*.log
+*.csv
+*.xlsx
+*.json
+*.pdf
+
+# Ignorer Render files auto générés
+render.yaml
+setup.sh
+
+# Ignorer fichiers OS
+.DS_Store
+Thumbs.db

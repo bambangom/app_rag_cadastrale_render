@@ -1,31 +1,119 @@
+# 📄 app_rag_cadastrale_render.py
+
 import streamlit as st
 import pandas as pd
 from PIL import Image
+import openai
+import io
+import os
 
-st.set_page_config(page_title="IA Cadastrale RAG", layout="wide")
-st.title("📊 IA Cadastrale RAG")
+# 📌 Configuration de la page
+st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")
+st.title("📊 IA Cadastrale RAG - Assistant Intelligent")
 
-# 📂 Upload de fichier
-uploaded_file = st.file_uploader("📥 Charger un fichier Excel ou une image", type=["xlsx", "csv", "png", "jpg", "jpeg"])
+# 📌 Clé API OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-if uploaded_file is not None:
-    st.success("✅ Fichier chargé avec succès")
+# 📌 Fonction d'analyse d'image avec OpenAI GPT-4 Vision
+def analyze_image_with_openai(image_bytes):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4-vision-preview",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Décris précisément ce bâtiment : type (individuel ou collectif), matériaux visibles, standing (prestige, ordinaire, économique, dégradé), nombre d'étages visibles."},
+                        {"type": "image", "image": {"data": image_bytes}}
+                    ]
+                }
+            ],
+            max_tokens=500
+        )
+        return response['choices'][0]['message']['content']
+    except Exception as e:
+        return f"Erreur OpenAI : {e}"
 
-    if uploaded_file.name.endswith((".xlsx", ".csv")):
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-            st.subheader("📄 Aperçu du fichier")
-            st.dataframe(df)
-        except Exception as e:
-            st.error(f"Erreur lors de la lecture du fichier : {e}")
+# 📌 Fonction de détermination de la catégorie cadastrale
+def determine_category_from_analysis(analysis_text):
+    if "individuel" in analysis_text.lower():
+        if "prestige" in analysis_text.lower():
+            return "1"
+        elif "ordinaire" in analysis_text.lower():
+            return "2"
+        elif "économique" in analysis_text.lower():
+            return "3"
+        elif "dégradé" in analysis_text.lower():
+            return "4"
+        else:
+            return "Non déterminé (individuel)"
+    elif "collectif" in analysis_text.lower():
+        if "prestige" in analysis_text.lower():
+            return "A"
+        elif "ordinaire" in analysis_text.lower():
+            return "B"
+        elif "économique" in analysis_text.lower():
+            return "C"
+        elif "dégradé" in analysis_text.lower():
+            return "D"
+        else:
+            return "Non déterminé (collectif)"
+    else:
+        return "Non déterminé (type inconnu)"
 
-    elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
-        try:
-            image = Image.open(uploaded_file)
-            st.image(image, caption="🖼️ Image chargée", use_column_width=True)
-        except Exception as e:
-            st.error(f"Erreur lors de l'affichage de l'image : {e}")
+# 📂 Uploader pour charger plusieurs images
+uploaded_files = st.file_uploader(
+    "📥 Charger une ou plusieurs images de bâtiments (.png, .jpg, .jpeg)", 
+    type=["png", "jpg", "jpeg"], 
+    accept_multiple_files=True
+)
+
+# 📋 Traitement des fichiers uploadés
+if uploaded_files:
+    results = []
+
+    for uploaded_file in uploaded_files:
+        # 🖼️ Afficher l'image
+        image = Image.open(uploaded_file)
+        st.image(image, caption=f"🖼️ {uploaded_file.name}", use_column_width=True)
+
+        # 🧠 Appel OpenAI pour analyse
+        with st.spinner(f"Analyse de {uploaded_file.name} avec OpenAI..."):
+            image_bytes = io.BytesIO()
+            image.save(image_bytes, format='PNG')
+            image_bytes = image_bytes.getvalue()
+
+            description = analyze_image_with_openai(image_bytes)
+            category = determine_category_from_analysis(description)
+
+        # ✅ Résultats individuels
+        st.success("✅ Analyse terminée")
+        st.write(f"**Description générée :** {description}")
+        st.write(f"**Catégorie cadastrale proposée :** {category}")
+
+        results.append({
+            "Nom du fichier": uploaded_file.name,
+            "Description OpenAI": description,
+            "Catégorie cadastrale": category
+        })
+
+    # 📊 Consolidation des résultats
+    if results:
+        st.subheader("📋 Résultats Consolidés")
+        df_results = pd.DataFrame(results)
+        st.dataframe(df_results)
+
+        # 💾 Exportation Excel
+        if st.button("💾 Exporter les résultats vers Excel"):
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                df_results.to_excel(writer, index=False, sheet_name="Résultats Cadastraux")
+            st.download_button(
+                label="📥 Télécharger le fichier Excel",
+                data=buffer.getvalue(),
+                file_name="resultats_ia_cadastrale.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+else:
+    st.info("📂 Veuillez charger une ou plusieurs images de bâtiments pour démarrer l'analyse.")
 

@@ -1,96 +1,80 @@
 import streamlit as st
 import pandas as pd
-import openai
-import base64
-import os
 from PIL import Image
-from io import BytesIO
+import io
+from openai import OpenAI
 
-# 📌 Configuration de la page
+# 📌 Initialisation du client OpenAI
+client = OpenAI()
+
+# 📄 Configuration de la page
 st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")
-st.title("🏢 IA Cadastrale RAG - Analyse Automatique d'Images")
 
-# 📌 Clé API OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# 🏷️ Titre de l'application
+st.title("📊 IA Cadastrale RAG")
 
-# 📂 Upload multiple d'images
-uploaded_files = st.file_uploader("📥 Charger une ou plusieurs images", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+# 📂 Upload de fichier(s)
+uploaded_files = st.file_uploader("📥 Charger un ou plusieurs fichiers Excel ou images", type=["xlsx", "csv", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
-# 📋 DataFrame pour enregistrer les résultats
-results = []
-
-def analyser_image_vision(file_bytes):
+def analyser_image_openai(image_bytes):
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4-vision-preview",
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "Analyse l'image et donne :\n"
-                                "- Type d'immeuble : 'Individuel' ou 'Collectif'\n"
-                                "- Nombre d'étages (RDC=0, R+1=1, R+2=2, etc.)\n"
-                                "- Catégorie cadastrale : pour 'Individuel' choisis parmi [1,2,3,4] ; pour 'Collectif' choisis parmi [A,B,C,D]\n"
-                                "- Une observation rapide sur le standing et l'état du bâtiment\n"
-                                "Sois concis, professionnel et structuré."
-                            )
-                        },
-                        {
-                            "type": "image",
-                            "image": {
-                                "data": base64.b64encode(file_bytes).decode('utf-8')
-                            }
-                        }
+                        {"type": "text", "text": """Décris précisément :
+- Le type d'immeuble (Individuel ou Collectif).
+- Le nombre de niveaux visibles (RDC = 0, R+1 = 1 étage, etc).
+- La catégorie cadastrale selon le décret sénégalais (Maison individuelle : Catégorie 1,2,3, etc. / Immeuble collectif : Catégorie A,B,C,D selon standing).
+Donne la réponse sous format JSON strict : {"type": "...", "nombre_etages": "...", "categorie": "..."}"""},
+                        {"type": "image", "image": image_bytes}
                     ]
                 }
             ],
-            max_tokens=1000,
+            max_tokens=500
         )
-        return response['choices'][0]['message']['content']
+        result = response.choices[0].message.content
+        return result
     except Exception as e:
         return f"❌ Erreur OpenAI Vision : {str(e)}"
 
-# 📊 Traitement des images uploadées
+# 🖼️ Fonction pour lire une image
+def read_image(file):
+    return file.read()
+
 if uploaded_files:
-    st.success(f"✅ {len(uploaded_files)} image(s) chargée(s)")
-
     for uploaded_file in uploaded_files:
-        try:
-            # Lire l'image
-            image_bytes = uploaded_file.read()
-            image = Image.open(BytesIO(image_bytes))
-            
-            # Afficher l'image
-            st.image(image, caption=uploaded_file.name, use_column_width=True)
+        st.success(f"✅ Fichier chargé : {uploaded_file.name}")
 
-            # 📤 Envoyer à OpenAI Vision pour analyse
-            st.info(f"🔎 Analyse IA de : {uploaded_file.name} ...")
-            result_text = analyser_image_vision(image_bytes)
+        if uploaded_file.name.endswith((".xlsx", ".csv")):
+            try:
+                if uploaded_file.name.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                st.subheader(f"📄 Aperçu de {uploaded_file.name}")
+                st.dataframe(df)
+            except Exception as e:
+                st.error(f"Erreur lors de la lecture du fichier : {e}")
 
-            # Afficher le résultat brut
-            st.code(result_text, language='markdown')
+        elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
+            try:
+                # Affichage de l'image
+                image = Image.open(uploaded_file)
+                st.image(image, caption=f"🖼️ {uploaded_file.name}", use_column_width=True)
 
-            # Sauvegarder pour DataFrame
-            results.append({
-                "Nom du fichier": uploaded_file.name,
-                "Analyse IA": result_text
-            })
+                # 📤 Analyse OpenAI
+                image_bytes = read_image(uploaded_file)
+                with st.spinner("🔎 Analyse IA en cours..."):
+                    resultat = analyser_image_openai(image_bytes)
+                st.subheader("📊 Résultat IA")
+                st.code(resultat, language="json")
 
-        except Exception as e:
-            st.error(f"Erreur lors du traitement de l'image {uploaded_file.name} : {e}")
+            except Exception as e:
+                st.error(f"Erreur lors de l'analyse de l'image : {e}")
 
-# 📥 Télécharger les résultats
-if results:
-    df_results = pd.DataFrame(results)
-    st.subheader("📄 Résultats complets")
-    st.dataframe(df_results)
+else:
+    st.info("📂 Veuillez charger au moins un fichier pour commencer l'analyse.")
 
-    st.download_button(
-        label="📥 Télécharger les résultats en CSV",
-        data=df_results.to_csv(index=False).encode('utf-8'),
-        file_name="resultats_analyse_cadastrale.csv",
-        mime="text/csv"
-    )

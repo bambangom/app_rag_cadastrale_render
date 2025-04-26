@@ -1,19 +1,23 @@
-# 📦 Importations
-import streamlit as st
-import pandas as pd
-from PIL import Image
-import io
+import os
 import base64
-from openai import OpenAI
+import requests
+import pandas as pd
+import streamlit as st
+from PIL import Image
+from io import BytesIO
 
-# ⚙️ Configuration Streamlit
+# 📍 Config Streamlit
 st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")
-st.title("🏢 IA Cadastrale RAG : Analyse automatique des bâtiments")
+st.title("🏢 IA Cadastrale RAG : Analyse automatique")
 
-# 🔑 Connexion à l'API OpenAI (clé doit être dans les variables d'environnement de Render)
-client = OpenAI()
+# 🔑 Chargement clé API OpenAI
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# 📥 Uploader plusieurs fichiers (images ou Excel)
+if not OPENAI_API_KEY:
+    st.error("❌ La clé API OpenAI n'est pas définie. Veuillez configurer OPENAI_API_KEY dans Render.")
+    st.stop()
+
+# 📂 Upload fichier Excel ou images
 uploaded_files = st.file_uploader(
     "📥 Uploader vos fichiers (Excel ou Images)",
     type=["xlsx", "csv", "png", "jpg", "jpeg"],
@@ -22,73 +26,80 @@ uploaded_files = st.file_uploader(
 
 if uploaded_files:
     for uploaded_file in uploaded_files:
-        st.markdown(f"### 📂 Fichier chargé : `{uploaded_file.name}`")
+        st.success(f"📂 Fichier chargé : {uploaded_file.name}")
 
-        if uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
+    results = []
+
+    for uploaded_file in uploaded_files:
+        if uploaded_file.name.endswith((".xlsx", ".csv")):
             try:
-                image = Image.open(uploaded_file)
-                st.image(image, caption=f"🖼️ Aperçu de {uploaded_file.name}", use_column_width=True)
-
-                st.info("📡 Envoi de l'image au modèle GPT-4 Vision pour analyse...")
-
-                # Encodage de l'image en base64
-                buffered = io.BytesIO()
-                image.save(buffered, format="PNG")
-                img_bytes = buffered.getvalue()
-                encoded_image = base64.b64encode(img_bytes).decode()
-
-                # Requête vers OpenAI Vision
-                response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "Tu es un expert en évaluation cadastrale au Sénégal. Ta mission est :\
-                                1. Détecter le type du bâtiment (Individuel ou Collectif)\
-                                2. Estimer le nombre d'étages (RDC, R+1, R+2, etc.)\
-                                3. Proposer une catégorie fiscale basée sur l'état du bâtiment selon les décrets sénégalais de 2010 et 2014."
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "Analyse cette image selon ton expertise cadastrale."
-                                },
-                                {
-                                    "type": "image",
-                                    "image": {"base64": encoded_image}
-                                }
-                            ]
-                        }
-                    ],
-                    temperature=0.2,
-                    max_tokens=1000
-                )
-
-                # Résultat IA
-                ia_result = response.choices[0].message.content
-                st.success("✅ Analyse IA terminée")
-                st.markdown("### 🔎 Résultat de l'analyse IA :")
-                st.markdown(ia_result)
-
-            except Exception as e:
-                st.error(f"❌ Erreur OpenAI Vision : {str(e)}")
-
-        elif uploaded_file.name.endswith((".xlsx", ".csv")):
-            try:
-                st.info("📊 Lecture du fichier Excel...")
                 if uploaded_file.name.endswith(".csv"):
                     df = pd.read_csv(uploaded_file)
                 else:
                     df = pd.read_excel(uploaded_file)
-
-                st.success("✅ Fichier chargé avec succès")
+                st.subheader("📄 Aperçu du fichier")
                 st.dataframe(df)
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la lecture du fichier Excel : {e}")
+
+        elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
+            try:
+                # 🖼️ Afficher l'image
+                image = Image.open(uploaded_file)
+                st.image(image, caption="🖼️ Image chargée", use_container_width=True)
+
+                # 📸 Encodage Base64 de l'image
+                buffered = BytesIO()
+                image.save(buffered, format="PNG")
+                img_base64 = base64.b64encode(buffered.getvalue()).decode()
+
+                # 🔥 Appel API OpenAI GPT-4o
+                url = "https://api.openai.com/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": "gpt-4o",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": 
+                                 """Analyse l'image pour :
+                                 - Identifier si c'est une maison individuelle ou un immeuble collectif
+                                 - Estimer le nombre d'étages visibles
+                                 - Déterminer la catégorie fiscale probable selon le décret 2010 :
+                                   * Maison individuelle : Catégories 1, 2, 3, etc.
+                                   * Immeuble collectif : Catégories A, B, C, etc.
+                                 Donne ta réponse sous forme d'un JSON compact avec les clés suivantes :
+                                 {"type": "...", "nombre_etages": "...", "categorie": "...", "commentaire": "..."}
+                                 """},
+                                {"type": "image", "image": f"data:image/png;base64,{img_base64}"}
+                            ]
+                        }
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 1000
+                }
+
+                response = requests.post(url, headers=headers, json=payload)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    message = result['choices'][0]['message']['content']
+                    st.info(f"🔍 Analyse IA : {message}")
+                    results.append(message)
+                else:
+                    st.error(f"❌ Erreur OpenAI Vision : {response.status_code} - {response.json()}")
 
             except Exception as e:
-                st.error(f"❌ Erreur lors de la lecture du fichier : {str(e)}")
+                st.error(f"❌ Erreur d'analyse : {e}")
+
+    if results:
+        st.success("✅ Toutes les analyses terminées !")
+        st.download_button("📥 Télécharger résultats en texte", "\n\n".join(results), file_name="analyse_cadastrale.txt")
 
 else:
-    st.info("📥 Veuillez uploader un fichier pour commencer.")
+    st.info("📥 Merci de charger un fichier Excel ou des images pour démarrer l'analyse.")
 

@@ -2,8 +2,12 @@ services:
   - type: web
     name: app-rag-cadastrale-render
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app_rag_cadastrale_render.py --server.port 10000
+    plan: free
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "streamlit run app_rag_cadastrale_render.py --server.port $PORT --server.address 0.0.0.0"
     envVars:
       - key: OPENAI_API_KEY
-        sync: true
+        sync: false
+    autoDeploy: true
+    envSpecific:
+      PORT: 10000

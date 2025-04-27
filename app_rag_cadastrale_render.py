@@ -11,12 +11,12 @@ import json
 st.set_page_config(page_title="IA Cadastrale RAG", layout="wide")
 st.title("🏢 IA Cadastrale RAG : Analyse automatique des bâtiments")
 
-# 📍 Récupérer la clé OpenAI et Dropbox (via secrets ou env)
-openai_api_key = st.secrets.get("OPENAI_API_KEY", None) or os.getenv("OPENAI_API_KEY")
-dropbox_token = st.secrets.get("DROPBOX_TOKEN", None) or os.getenv("DROPBOX_TOKEN")
+# 👉 On utilise seulement l'environnement Render
+openai_api_key = os.getenv("OPENAI_API_KEY")
+dropbox_access_token = os.getenv("DROPBOX_ACCESS_TOKEN")
 
-if not openai_api_key or not dropbox_token:
-    st.error("🚨 Configuration manquante. Assurez-vous d'avoir défini OPENAI_API_KEY et DROPBOX_TOKEN.")
+if not openai_api_key or not dropbox_access_token:
+    st.error("🚨 Variables d'environnement manquantes. Veuillez configurer OPENAI_API_KEY et DROPBOX_ACCESS_TOKEN dans Render.")
     st.stop()
 
 openai.api_key = openai_api_key

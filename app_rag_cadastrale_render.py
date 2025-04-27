@@ -1,30 +1,21 @@
 import streamlit as st
 import pandas as pd
-import requests
 import openai
-import os
 from PIL import Image
-import tempfile
+from io import BytesIO
 
-# 📋 Configuration de la page
-st.set_page_config(page_title="📊 IA Cadastrale RAG : Analyse automatique des bâtiments", layout="wide")
-st.title("🏢 IA Cadastrale RAG : Analyse automatique des bâtiments")
+# ✅ Configuration de la page Streamlit
+st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")
+st.title("🏢 IA Cadastrale RAG : Analyse automatique")
 
-# 🔑 Configuration OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# 🔑 Clé API OpenAI depuis .env ou variables Render
+openai.api_key = st.secrets.get("OPENAI_API_KEY") or st.text_input("🔑 Entrez votre clé OpenAI ici :", type="password")
 
-# 🛠️ Fonction pour uploader un fichier vers Transfer.sh
-def upload_to_transfersh(file_path):
-    with open(file_path, 'rb') as f:
-        files = {'file': (os.path.basename(file_path), f)}
-        response = requests.post('https://transfer.sh/', files=files)
-        if response.status_code == 200:
-            return response.text.strip()
-        else:
-            return None
+# 📂 Chargement de fichier(s)
+uploaded_files = st.file_uploader("📥 Uploader vos fichiers (Excel ou Images)", type=["xlsx", "csv", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
-# 🧠 Fonction d'analyse avec OpenAI Vision
-def analyse_image_openai(image_url):
+# 🚀 Fonction d'analyse via OpenAI Vision
+def analyse_image_openai(file_bytes):
     try:
         response = openai.chat.completions.create(
             model="gpt-4o",
@@ -32,12 +23,16 @@ def analyse_image_openai(image_url):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Analyse cette image d'un bâtiment pour déterminer :\n"
-                                                  "- Le type : Individuel ou Collectif\n"
-                                                  "- Le nombre d'étages (RDC=0, R+1=1...)\n"
-                                                  "- La catégorie fiscale selon le décret cadastral 2010\n"
-                                                  "Donne une réponse courte, sous forme de tableau lisible."},
-                        {"type": "image_url", "image_url": image_url}
+                        {"type": "text", "text": 
+                            "Tu es un expert en fiscalité cadastrale au Sénégal. "
+                            "Analyse cette image pour déterminer :\n"
+                            "- Type du bâtiment : Individuel ou Collectif\n"
+                            "- Nombre d'étages visibles : (RDC = 0, R+1 = 1, etc.)\n"
+                            "- Catégorie cadastrale applicable selon le Décret 2010 (ex: 1,2,3 pour Individuel ; A,B,C pour Collectif)\n"
+                            "- Ajoute si possible une remarque sur l’état (neuf, dégradé, standing).\n"
+                            "Réponds sous forme JSON structuré."
+                        },
+                        {"type": "file", "file": file_bytes}
                     ]
                 }
             ]
@@ -47,50 +42,41 @@ def analyse_image_openai(image_url):
         st.error(f"❌ Erreur OpenAI Vision : {e}")
         return None
 
-# 📤 Uploader les fichiers
-uploaded_files = st.file_uploader("📥 Uploader vos fichiers (Excel ou Images)", type=["xlsx", "csv", "png", "jpg", "jpeg"], accept_multiple_files=True)
-
+# 📊 Traitement des fichiers
 if uploaded_files:
     for uploaded_file in uploaded_files:
         file_name = uploaded_file.name
-        st.success(f"📂 Fichier chargé : {file_name}")
+        st.info(f"📂 Fichier chargé : {file_name}")
 
-        # 📄 Si Excel ou CSV
+        # Traitement Excel ou CSV
         if file_name.endswith((".xlsx", ".csv")):
             try:
                 if file_name.endswith(".csv"):
                     df = pd.read_csv(uploaded_file)
                 else:
                     df = pd.read_excel(uploaded_file)
-                st.subheader("🗂️ Aperçu du fichier :")
-                st.dataframe(df, use_container_width=True)
+                st.subheader("📄 Aperçu du fichier")
+                st.dataframe(df)
             except Exception as e:
-                st.error(f"❌ Erreur de lecture du fichier : {e}")
+                st.error(f"❌ Erreur lors de la lecture du fichier : {e}")
 
-        # 🖼️ Si Image
+        # Traitement Images
         elif file_name.endswith((".png", ".jpg", ".jpeg")):
             try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
-                    tmp_file.write(uploaded_file.read())
-                    tmp_path = tmp_file.name
+                file_bytes = uploaded_file.getvalue()
 
-                st.image(tmp_path, caption=f"🖼️ Aperçu de : {file_name}", use_column_width=True)
+                # 📸 Affichage de l'image
+                st.image(file_bytes, caption=f"🖼️ Aperçu : {file_name}", use_container_width=True)
 
-                # 🚀 Uploader vers Transfer.sh
-                image_url = upload_to_transfersh(tmp_path)
-                if image_url:
-                    st.info(f"🌐 Image URL temporaire générée : {image_url}")
-
-                    # 🔍 Analyse IA OpenAI
-                    result = analyse_image_openai(image_url)
-                    if result:
-                        st.success("✅ Analyse IA terminée :")
-                        st.markdown(result)
-                else:
-                    st.error("❌ Échec de l'upload sur Transfer.sh. Impossible d'analyser l'image.")
+                # 🔍 Analyse IA OpenAI
+                result = analyse_image_openai(file_bytes)
+                if result:
+                    st.success("✅ Résultat IA :")
+                    st.json(result)
 
             except Exception as e:
                 st.error(f"❌ Erreur lors du traitement de l'image : {e}")
 
 else:
-    st.info("📩 Veuillez uploader un fichier pour commencer.")
+    st.warning("🚨 Merci de charger au moins un fichier pour démarrer l'analyse.")
+

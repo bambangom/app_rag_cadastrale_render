@@ -1,33 +1,30 @@
-import os
 import streamlit as st
 import pandas as pd
-import requests
 from PIL import Image
-from io import BytesIO
+import openai
+import base64
+import requests
+import os
 
-# 📄 Configuration de la page
-st.set_page_config(page_title="🏢 IA Cadastrale RAG", layout="wide")
-
-# 📢 Affichage du titre principal
+# Configuration de la page
+st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")
 st.title("🏢 IA Cadastrale RAG : Analyse automatique")
 
-# 📥 Uploader un ou plusieurs fichiers
-uploaded_files = st.file_uploader(
-    "📥 Uploader vos fichiers (Excel ou Images)", 
-    type=["xlsx", "csv", "png", "jpg", "jpeg"], 
-    accept_multiple_files=True
-)
-
-# 🔑 Clé API OpenAI depuis l'environnement Render
+# Charger clé API OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    st.error("🚨 OPENAI_API_KEY manquante. Configure-la dans les variables d'environnement Render !")
+    st.stop()
 
-# 🔗 Fonction pour envoyer une image en tant que URL vers OpenAI
-def analyse_image_via_openai_url(image_url):
+# Fonction pour analyser une image avec OpenAI Vision via base64
+def analyse_image_via_openai_base64(image_bytes):
     try:
         headers = {
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
         }
+
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
         payload = {
             "model": "gpt-4o",
@@ -37,12 +34,23 @@ def analyse_image_via_openai_url(image_url):
                     "content": [
                         {
                             "type": "text",
-                            "text": "Voici une image d'un bâtiment. Décris-moi son type (individuel/collectif), le nombre approximatif d'étages visibles, l'état général (neuf, ordinaire, dégradé) et propose une catégorie cadastrale selon un décret foncier."
+                            "text": (
+                                "Tu es un expert cadastral. À partir de l'image suivante, "
+                                "déduis :\n"
+                                "- Type de construction : Maison individuelle ou Immeuble collectif\n"
+                                "- Nombre approximatif d'étages visibles\n"
+                                "- État général : Neuf, Ordinaire, Dégradé\n"
+                                "- Proposition de catégorie :\n"
+                                "    * Si Maison individuelle : Catégories 1, 2, 3 selon qualité\n"
+                                "    * Si Immeuble collectif : Catégories A, B, C, D selon standing\n"
+                                "Sois concis et structuré."
+                            )
                         },
                         {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": image_url
+                            "type": "image_file",
+                            "image_file": {
+                                "data": base64_image,
+                                "mime_type": "image/png"
                             }
                         }
                     ]
@@ -52,8 +60,8 @@ def analyse_image_via_openai_url(image_url):
         }
 
         response = requests.post(
-            "https://api.openai.com/v1/chat/completions", 
-            headers=headers, 
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
             json=payload
         )
 
@@ -68,7 +76,16 @@ def analyse_image_via_openai_url(image_url):
         st.error(f"❌ Erreur OpenAI Vision : {e}")
         return None
 
-# 🚀 Si des fichiers sont uploadés
+# 📥 Upload de fichiers
+uploaded_files = st.file_uploader(
+    "📥 Uploader vos fichiers (Excel ou Images)",
+    type=["xlsx", "csv", "png", "jpg", "jpeg"],
+    accept_multiple_files=True
+)
+
+# Initialiser les résultats
+results = []
+
 if uploaded_files:
     for uploaded_file in uploaded_files:
         st.success(f"📂 Fichier chargé : {uploaded_file.name}")
@@ -79,42 +96,43 @@ if uploaded_files:
                     df = pd.read_csv(uploaded_file)
                 else:
                     df = pd.read_excel(uploaded_file)
-                st.subheader("📄 Aperçu du fichier Excel")
+
+                st.subheader(f"📄 Aperçu du fichier {uploaded_file.name}")
                 st.dataframe(df)
+
             except Exception as e:
-                st.error(f"❌ Erreur de lecture du fichier : {e}")
+                st.error(f"❌ Erreur de lecture : {e}")
 
         elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
             try:
                 image = Image.open(uploaded_file)
                 st.image(image, caption="🖼️ Image chargée", use_container_width=True)
 
-                # ⬆️ Upload temporaire de l'image vers un service pour obtenir une URL
-                temp_path = f"/tmp/{uploaded_file.name}"
-                image.save(temp_path)
+                image_bytes = uploaded_file.read()
+                analyse = analyse_image_via_openai_base64(image_bytes)
 
-                # ⚡ Utilisation de file.io pour héberger temporairement l'image (ou un autre service temporaire)
-                with open(temp_path, "rb") as img_file:
-                    upload_response = requests.post(
-                        "https://file.io",
-                        files={"file": img_file}
-                    )
-                    upload_data = upload_response.json()
-                    image_url = upload_data.get("link")
-
-                if image_url:
-                    st.info(f"🌐 Image uploadée temporairement à : {image_url}")
-
-                    # 🎯 Analyse de l'image via OpenAI Vision
-                    analyse = analyse_image_via_openai_url(image_url)
-
-                    if analyse:
-                        st.subheader("📋 Résultat de l'analyse IA")
-                        st.write(analyse)
-                    else:
-                        st.error("⚠️ Impossible d'analyser l'image avec OpenAI.")
-                else:
-                    st.error("⚠️ Impossible d'uploader temporairement l'image.")
+                if analyse:
+                    st.subheader("🧠 Résultat de l'analyse IA :")
+                    st.write(analyse)
+                    
+                    results.append({
+                        "Nom du fichier": uploaded_file.name,
+                        "Analyse IA": analyse
+                    })
 
             except Exception as e:
                 st.error(f"❌ Erreur d'affichage ou de traitement : {e}")
+
+# 📥 Téléchargement résultats Excel
+if results:
+    df_results = pd.DataFrame(results)
+    st.subheader("📊 Résultats globaux IA")
+    st.dataframe(df_results)
+
+    csv = df_results.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Télécharger les résultats en CSV",
+        data=csv,
+        file_name="resultats_ia_cadastrale.csv",
+        mime="text/csv"
+    )

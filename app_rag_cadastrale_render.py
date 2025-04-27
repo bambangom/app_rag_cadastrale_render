@@ -1,101 +1,152 @@
+# ===============================
+# 📋 IA Cadastrale RAG - Application Principale
+# ===============================
+
 import streamlit as st
 import pandas as pd
-import os
-import openai
-import requests
 from PIL import Image
-from io import BytesIO
-from datetime import datetime
+import openai
+import base64
+import os
+import io
 
+# 🛠️ Config Streamlit - Doit être tout en haut
 st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")
 
-# 🔑 Chargement de la clé API OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# ===============================
+# 🔑 Clé OpenAI via Variables d'environnement
+# ===============================
 
-if not openai.api_key:
-    openai.api_key = st.text_input("🔑 Entrez votre clé OpenAI ici :", type="password")
+openai_api_key = os.getenv("OPENAI_API_KEY")
 
-# 📂 Upload des fichiers
-st.title("🏢 IA Cadastrale RAG : Analyse automatique")
+if not openai_api_key:
+    st.error("❌ Erreur : La clé OPENAI_API_KEY n'est pas définie dans les variables d'environnement.")
+    st.stop()
+
+# ✅ Initialisation Client OpenAI
+client = openai.OpenAI(api_key=openai_api_key)
+
+# ===============================
+# 🎨 Titre principal
+# ===============================
+
+st.title("🏢 IA Cadastrale RAG : Analyse automatique 📸")
+st.markdown("📥 **Uploader vos fichiers Excel (.xlsx, .csv) ou images (.png, .jpg, .jpeg)**")
+
+# ===============================
+# 📥 Upload fichiers (Excel ou Images)
+# ===============================
 
 uploaded_files = st.file_uploader(
-    "📥 Uploader vos fichiers (Excel ou Images)",
+    "Drag and drop files here",
     type=["xlsx", "csv", "png", "jpg", "jpeg"],
     accept_multiple_files=True
 )
 
-def envoyer_vers_transfersh(file_bytes, filename):
-    """Uploader temporairement l'image sur transfer.sh pour OpenAI Vision."""
-    try:
-        response = requests.put(
-            f"https://transfer.sh/{filename}",
-            data=file_bytes,
-            headers={"Max-Downloads": "1", "Max-Days": "1"}
-        )
-        if response.status_code == 200:
-            return response.text.strip()
-        else:
-            st.error(f"Erreur Upload transfer.sh : {response.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"Erreur de connexion à transfer.sh : {e}")
-        return None
+# 📂 Résultats collectés
+results = []
 
-def analyser_image_via_openai(url):
-    """Envoyer l'URL publique de l'image à OpenAI Vision."""
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Tu es un expert en diagnostic immobilier cadastral."},
-                {"role": "user", "content": [
-                    {"type": "text", "text": "Analyse l'image immobilière. Donne : 1) Nombre de niveaux, 2) Type d'immeuble (individuel ou collectif), 3) Catégorie fiscale (A, B, C, D, 1, 2, 3, 4) selon le standing."},
-                    {"type": "image_url", "image_url": {"url": url}}
-                ]}
-            ],
-            temperature=0.3
-        )
-        result = response.choices[0].message.content
-        return result
-    except Exception as e:
-        st.error(f"❌ Erreur OpenAI Vision : {e}")
-        return None
-
-def traiter_fichier_excel(file):
-    try:
-        if file.name.endswith(".csv"):
-            df = pd.read_csv(file)
-        else:
-            df = pd.read_excel(file)
-        st.success("✅ Fichier Excel chargé")
-        st.dataframe(df)
-        return df
-    except Exception as e:
-        st.error(f"Erreur chargement Excel : {e}")
-        return None
-
-def traiter_image(file):
-    try:
-        image = Image.open(file)
-        st.image(image, caption="🖼️ Image chargée", use_column_width=True)
-        file_bytes = file.read()
-        upload_url = envoyer_vers_transfersh(file_bytes, file.name)
-        if upload_url:
-            st.info(f"🔗 URL de l'image : {upload_url}")
-            resultat = analyser_image_via_openai(upload_url)
-            if resultat:
-                st.success("✅ Analyse de l'image terminée")
-                st.markdown(f"### 📋 Résultat de l'analyse :\n{resultat}")
-            else:
-                st.error("❌ Échec de l'analyse de l'image")
-    except Exception as e:
-        st.error(f"Erreur traitement image : {e}")
-
-# 🎯 Traitement principal
 if uploaded_files:
-    for file in uploaded_files:
-        st.subheader(f"📂 Fichier chargé : {file.name}")
-        if file.name.endswith((".xlsx", ".csv")):
-            traiter_fichier_excel(file)
-        elif file.name.endswith((".png", ".jpg", ".jpeg")):
-            traiter_image(file)
+    for uploaded_file in uploaded_files:
+        st.success(f"✅ Fichier chargé : {uploaded_file.name}")
+
+        if uploaded_file.name.endswith((".xlsx", ".csv")):
+            # 📄 Traitement Fichier Excel/CSV
+            try:
+                if uploaded_file.name.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                
+                st.subheader(f"📄 Aperçu du fichier : {uploaded_file.name}")
+                st.dataframe(df)
+
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la lecture du fichier : {e}")
+
+        elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
+            # 🖼️ Traitement Fichier Image
+            try:
+                image = Image.open(uploaded_file)
+                st.image(image, caption=f"🖼️ Image : {uploaded_file.name}", use_container_width=True)
+
+                # 📸 Analyse avec OpenAI Vision
+                with st.spinner("🔍 Analyse IA de l'image en cours..."):
+
+                    # Encode image en base64
+                    buffered = io.BytesIO()
+                    image.save(buffered, format="PNG")
+                    img_base64 = base64.b64encode(buffered.getvalue()).decode()
+
+                    # Appel API OpenAI Vision - GPT-4o
+                    response = client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "Tu es un expert en évaluation cadastrale. À partir de l'image d'un bâtiment, donne :"
+                                           "\n- Le type (Individuel ou Collectif)"
+                                           "\n- Le nombre d'étages (RDC=0, R+1=1, etc.)"
+                                           "\n- La catégorie cadastrale (1, 2, 3 pour individuel; A, B, C pour collectif)"
+                                           "\n- Un bref commentaire de l'état visuel général."
+                            },
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Analyse cette image et donne moi les informations demandées."
+                                    },
+                                    {
+                                        "type": "image",
+                                        "image": {
+                                            "base64": img_base64,
+                                            "mime_type": "image/png"
+                                        }
+                                    }
+                                ]
+                            }
+                        ],
+                        max_tokens=500
+                    )
+
+                    # 🧠 Résultat de l'analyse
+                    analysis_result = response.choices[0].message.content
+                    st.success("✅ Analyse terminée")
+                    st.text_area(f"📝 Résultat IA pour {uploaded_file.name}", analysis_result, height=200)
+
+                    # 🔥 Sauvegarde dans résultats
+                    results.append({
+                        "Nom fichier": uploaded_file.name,
+                        "Analyse IA": analysis_result
+                    })
+
+            except Exception as e:
+                st.error(f"❌ Erreur OpenAI Vision : {e}")
+
+# ===============================
+# 📤 Sauvegarde résultats ?
+# ===============================
+
+if results:
+    st.markdown("---")
+    st.subheader("📥 Télécharger Résultats")
+
+    df_results = pd.DataFrame(results)
+
+    # 📥 Téléchargement Excel
+    excel_output = io.BytesIO()
+    with pd.ExcelWriter(excel_output, engine="xlsxwriter") as writer:
+        df_results.to_excel(writer, index=False, sheet_name="Résultats")
+    excel_output.seek(0)
+
+    st.download_button(
+        label="📥 Télécharger Résultats Excel",
+        data=excel_output,
+        file_name="resultats_ia_cadastrale.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# ===============================
+# ✅ Fin
+# ===============================

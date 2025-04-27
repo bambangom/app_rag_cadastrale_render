@@ -1,46 +1,78 @@
-def analyse_image_openai(file_url):
-    try:
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "gpt-4o",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
+import streamlit as st
+import pandas as pd
+import openai
+import os
+from PIL import Image
+import tempfile
+
+# Configuration Streamlit
+st.set_page_config(page_title="🏢 IA Cadastrale RAG : Analyse automatique des bâtiments", layout="wide")
+
+# Clé API OpenAI
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
+
+# Titre principal
+st.title("🏢 IA Cadastrale RAG : Analyse automatique des bâtiments")
+
+# Uploader fichiers
+uploaded_files = st.file_uploader("📥 Uploader vos fichiers (Excel ou Images)", type=["xlsx", "csv", "png", "jpg", "jpeg"], accept_multiple_files=True)
+
+if not uploaded_files:
+    st.info("📂 Veuillez uploader un fichier pour commencer.")
+else:
+    for uploaded_file in uploaded_files:
+        filename = uploaded_file.name
+        st.success(f"📂 Fichier chargé : {filename}")
+
+        # Si Excel
+        if filename.endswith((".xlsx", ".csv")):
+            if filename.endswith(".csv"):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+
+            st.subheader("📄 Aperçu du fichier Excel")
+            st.dataframe(df)
+
+        # Si Image
+        elif filename.endswith((".png", ".jpg", ".jpeg")):
+            try:
+                # Tempfile pour créer un lien temporaire
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                    tmpfile.write(uploaded_file.getvalue())
+                    tmpfile_path = tmpfile.name
+
+                image = Image.open(tmpfile_path)
+                st.image(image, caption=f"🖼️ {filename}", use_column_width=True)
+
+                # Création d'une URL locale pour OpenAI
+                # (Nous allons simuler une url car en Render ce sera un problème sans vraie URL publique)
+                st.warning("⚠️ Mode simulation : en local le modèle OpenAI Vision nécessite des URLs publiques. Sur Render réel, il faudra utiliser un CDN temporaire ou upload direct.")
+                # On génère seulement la description basée sur le contenu binaire brut.
+
+                with open(tmpfile_path, "rb") as image_file:
+                    image_bytes = image_file.read()
+
+                response = openai.chat.completions.create(
+                    model="gpt-4-vision-preview",
+                    messages=[
                         {
-                            "type": "text",
-                            "text": (
-                                "Analyse cette image d'immeuble et déduis uniquement :\n\n"
-                                "- Le **type** : Maison individuelle ou Immeuble collectif\n"
-                                "- Le **nombre d'étages** : RDC = 0, R+1 = 1, etc.\n"
-                                "- La **catégorie fiscale** selon le décret sénégalais (1, 2, 3 pour individuel ou A, B, C pour collectif)\n"
-                                "- Fais une déduction précise sans inventer.\n"
-                            )
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": file_url
-                            }
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "Décris ce bâtiment en précisant : nombre d'étages, type (immeuble collectif ou maison individuelle), état apparent, matériaux visibles et niveau de standing. Sois concis et technique."},
+                                {"type": "image", "image": {"data": image_bytes, "mime_type": "image/png"}}
+                            ]
                         }
-                    ]
-                }
-            ],
-            "temperature": 0.2,
-            "max_tokens": 500
-        }
+                    ],
+                    max_tokens=800
+                )
 
-        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+                # Résultat
+                generated_description = response.choices[0].message.content
+                st.success("✅ Analyse IA terminée :")
+                st.markdown(generated_description)
 
-        if response.status_code == 200:
-            output = response.json()
-            content = output["choices"][0]["message"]["content"]
-            return content
-        else:
-            return f"❌ Erreur OpenAI Vision : {response.status_code} - {response.json()}"
+            except Exception as e:
+                st.error(f"❌ Erreur OpenAI Vision : {e}")
 
-    except Exception as e:
-        return f"❌ Exception : {e}"

@@ -3,76 +3,77 @@ import pandas as pd
 from PIL import Image
 import openai
 import os
-import io
-import base64
 
-# 🎯 Config Streamlit
-st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")
-st.title("🏢 IA Cadastrale RAG : Analyse automatique")
+# Configuration de la page
+st.set_page_config(page_title="🏢 IA Cadastrale RAG : Analyse automatique des bâtiments", layout="wide")
+st.title("🏢 IA Cadastrale RAG : Analyse automatique des bâtiments")
 
-# 🔐 Clé API OpenAI
+# Récupérer la clé OpenAI
 openai_api_key = os.getenv("OPENAI_API_KEY")
+
 if not openai_api_key:
-    st.error("🚨 Clé API OpenAI non trouvée. Définis ta variable d'environnement dans Render.com")
+    st.error("❌ Clé OpenAI non trouvée. Veuillez configurer la variable d'environnement OPENAI_API_KEY.")
     st.stop()
 
 openai.api_key = openai_api_key
 
-# 📥 Uploader fichiers
-uploaded_files = st.file_uploader(
-    "📥 Uploader vos fichiers (Excel ou Images)",
-    type=["xlsx", "csv", "png", "jpg", "jpeg"],
-    accept_multiple_files=True
-)
-
-# 🔥 Fonction : encoder l'image Base64
-def encode_image_to_base64(image_file):
-    return base64.b64encode(image_file.read()).decode('utf-8')
+# Uploader le fichier
+uploaded_files = st.file_uploader("📥 Uploader vos fichiers (Excel ou Images)", type=["xlsx", "csv", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
 if uploaded_files:
     for uploaded_file in uploaded_files:
         st.success(f"📂 Fichier chargé : {uploaded_file.name}")
 
-        if uploaded_file.name.endswith((".xlsx", ".csv")):
-            try:
-                if uploaded_file.name.endswith(".csv"):
-                    df = pd.read_csv(uploaded_file)
-                else:
-                    df = pd.read_excel(uploaded_file)
-                st.subheader(f"📄 Aperçu de {uploaded_file.name}")
-                st.dataframe(df)
-            except Exception as e:
-                st.error(f"❌ Erreur de lecture fichier : {e}")
-
-        elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
+        if uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
             try:
                 img = Image.open(uploaded_file)
-                st.image(img, caption=f"🖼️ {uploaded_file.name}", use_container_width=True)
+                st.image(img, caption=uploaded_file.name, use_column_width=True)
+
+                # Préparer l'upload sur OpenAI pour obtenir un file_id
+                uploaded_file.seek(0)
+                file_response = openai.files.create(file=uploaded_file, purpose="vision")
+                file_id = file_response.id
 
                 with st.spinner("🔎 Analyse IA en cours..."):
-                    uploaded_file.seek(0)
-                    base64_img = encode_image_to_base64(uploaded_file)
-
-                    response = openai.chat.completions.create(
+                    completion = openai.chat.completions.create(
                         model="gpt-4o",
                         messages=[
                             {
                                 "role": "user",
                                 "content": [
-                                    {"type": "text", "text": "Analyse cette image pour déterminer : 1) Type d'immeuble (individuel ou collectif), 2) Nombre d'étages visibles, 3) Catégorie cadastrale correcte selon décret 2010-439 et décret 2014."},
-                                    {"type": "file", "file": {"base64": base64_img, "name": uploaded_file.name}}
+                                    {"type": "text", "text": (
+                                        "Analyse l'image pour :\n"
+                                        "- Déterminer si c'est un bâtiment individuel ou collectif.\n"
+                                        "- Compter le nombre d'étages visibles.\n"
+                                        "- Proposer une catégorie cadastrale selon décret 2010-439 et 2014.\n"
+                                        "- Rédiger un résumé clair pour usage cadastral."
+                                    )},
+                                    {"type": "file", "file": {"file_id": file_id}}
                                 ]
                             }
                         ],
                         temperature=0.2
                     )
 
-                    result = response.choices[0].message.content
-                    st.subheader("📋 Résultat IA")
-                    st.success(result)
+                    result = completion.choices[0].message.content
+                    st.success("✅ Analyse IA terminée :")
+                    st.markdown(result)
 
             except Exception as e:
                 st.error(f"❌ Erreur lors du traitement de l'image : {e}")
 
+        elif uploaded_file.name.endswith((".xlsx", ".csv")):
+            try:
+                if uploaded_file.name.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+
+                st.subheader("📄 Aperçu du fichier")
+                st.dataframe(df)
+
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la lecture du fichier Excel/CSV : {e}")
+
 else:
-    st.info("📂 Merci de uploader un fichier pour commencer l'analyse.")
+    st.info("📂 Veuillez uploader un fichier pour commencer.")

@@ -10,7 +10,7 @@ st.set_page_config(page_title="📊 IA Cadastrale RAG", layout="wide")
 st.title("🏢 IA Cadastrale RAG : Analyse automatique")
 
 # 🔐 Clé API OpenAI depuis environnement Render (via st.secrets ou variable d'environnement)
-openai_api_key = st.secrets.get("OPENAI_API_KEY", None) or os.getenv("OPENAI_API_KEY")
+openai_api_key = os.getenv("OPENAI_API_KEY")
 
 if not openai_api_key:
     st.error("🚨 Clé API OpenAI non configurée. Veuillez définir 'OPENAI_API_KEY'.")

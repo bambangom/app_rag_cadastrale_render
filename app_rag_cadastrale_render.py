@@ -1,149 +1,132 @@
-# 🚀 Imports
 import streamlit as st
-import openai
 import pandas as pd
-import requests
-import json
+import openai
+import dropbox
 import base64
 import os
-from io import BytesIO
-from PIL import Image
-from datetime import datetime
+import requests
+import json
 
-# 🛡️ Clé API OpenAI (depuis Variables Render ou secrets)
-openai_api_key = os.getenv("OPENAI_API_KEY")
-if not openai_api_key:
-    st.error("❌ OPENAI_API_KEY non trouvé dans l'environnement.")
+# 📍 Configuration
+st.set_page_config(page_title="IA Cadastrale RAG", layout="wide")
+st.title("🏢 IA Cadastrale RAG : Analyse automatique des bâtiments")
+
+# 📍 Récupérer la clé OpenAI et Dropbox (via secrets ou env)
+openai_api_key = st.secrets.get("OPENAI_API_KEY", None) or os.getenv("OPENAI_API_KEY")
+dropbox_token = st.secrets.get("DROPBOX_TOKEN", None) or os.getenv("DROPBOX_TOKEN")
+
+if not openai_api_key or not dropbox_token:
+    st.error("🚨 Configuration manquante. Assurez-vous d'avoir défini OPENAI_API_KEY et DROPBOX_TOKEN.")
     st.stop()
+
 openai.api_key = openai_api_key
+dbx = dropbox.Dropbox(dropbox_token)
 
-# 📦 Token Dropbox (à stocker aussi dans Variables Render)
-dropbox_token = os.getenv("DROPBOX_ACCESS_TOKEN")
-if not dropbox_token:
-    st.error("❌ DROPBOX_ACCESS_TOKEN non trouvé dans l'environnement.")
-    st.stop()
+# 📂 Upload de fichiers
+uploaded_files = st.file_uploader(
+    "📥 Uploader vos fichiers (Excel ou Images)",
+    type=["xlsx", "csv", "png", "jpg", "jpeg"],
+    accept_multiple_files=True
+)
 
-# 📂 Fonctions Dropbox
-def upload_to_dropbox(file_bytes, filename):
-    """Upload le fichier dans Dropbox et retourne l'URL partagée"""
-    try:
-        # Upload dans Dropbox
-        headers = {
-            "Authorization": f"Bearer {dropbox_token}",
-            "Content-Type": "application/octet-stream",
-            "Dropbox-API-Arg": json.dumps({
-                "path": f"/{filename}",
-                "mode": "add",
-                "autorename": True,
-                "mute": False
-            })
-        }
-        upload_url = "https://content.dropboxapi.com/2/files/upload"
-        response = requests.post(upload_url, headers=headers, data=file_bytes)
-
-        if response.status_code == 200:
-            # Créer un lien partagé
-            create_shared_link_url = "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings"
-            headers_link = {
-                "Authorization": f"Bearer {dropbox_token}",
-                "Content-Type": "application/json"
-            }
-            data_link = {
-                "path": json.loads(response.content)["path_display"],
-                "settings": {"requested_visibility": "public"}
-            }
-            response_link = requests.post(create_shared_link_url, headers=headers_link, json=data_link)
-            if response_link.status_code == 200:
-                url = response_link.json()["url"].replace("?dl=0", "?raw=1")  # Important : passer en URL directe
-                return url
-            else:
-                st.error(f"Erreur création lien partagé Dropbox : {response_link.text}")
-        else:
-            st.error(f"Erreur upload Dropbox : {response.text}")
-    except Exception as e:
-        st.error(f"Erreur Dropbox : {e}")
-    return None
-
-# ⚙️ Fonction d'analyse OpenAI Vision
-def analyser_batiment(image_url):
+# 📈 Fonction d'analyse OpenAI Vision
+def analyser_image_url(url):
     try:
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Tu es un expert en évaluation cadastrale d'immeubles."},
+                {"role": "system", "content": "Tu es un expert en évaluation cadastrale. À partir d'une photo d'un bâtiment, déduis : {'niveaux': ?, 'type_immeuble': 'individuel/collectif', 'categorie': '1/2/3' pour individuel ou 'A/B/C' pour collectif, 'description': '...'}."},
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Analyse la photo et réponds en JSON {'niveaux': ?, 'type_immeuble': 'individuel/collectif', 'categorie': '1/2/3/A/B/C', 'description': '...'} selon le décret 2010-439."},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": image_url}
-                        },
-                    ],
-                },
+                        {"type": "text", "text": "Voici l'image à analyser."},
+                        {"type": "image_url", "image_url": {"url": url}}
+                    ]
+                }
             ],
             temperature=0
         )
-        return response.choices[0].message.content
+        message = response.choices[0].message.content
+        return json.loads(message)
     except Exception as e:
         st.error(f"❌ Erreur OpenAI Vision : {e}")
         return None
 
-# 🖥️ Interface Streamlit
-st.set_page_config(page_title="IA Cadastrale RAG", layout="wide")
-st.title("🏢 IA Cadastrale RAG : Analyse Automatique des Immeubles")
+# 📂 Fonction upload Dropbox ➔ lien direct
+# 📂 Fonction upload Dropbox ➔ lien direct (corrigé shared_link_already_exists)
+def upload_et_get_url(file):
+    try:
+        file_path = f"/IA_CADASTRE/{file.name}"
+        dbx.files_upload(file.getbuffer(), file_path, mode=dropbox.files.WriteMode.overwrite)
 
-uploaded_files = st.file_uploader("📥 Charger vos images (PNG, JPG, JPEG)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+        try:
+            # 🔥 Essayer de créer un lien
+            shared_link_metadata = dbx.sharing_create_shared_link_with_settings(file_path)
+        except dropbox.exceptions.ApiError as e:
+            # 🔥 Si lien existe déjà ➔ récupérer les liens existants
+            if isinstance(e.error, dropbox.sharing.CreateSharedLinkWithSettingsError) and e.error.is_shared_link_already_exists():
+                links = dbx.sharing_list_shared_links(path=file_path).links
+                if links:
+                    shared_link_metadata = links[0]
+                else:
+                    raise e
+            else:
+                raise e
 
+        url = shared_link_metadata.url
+
+        # 🔥 Corriger pour obtenir un lien direct
+        if "dropbox.com" in url and "?dl=0" in url:
+            url = url.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
+
+        return url
+
+    except Exception as e:
+        st.error(f"❌ Erreur Dropbox : {e}")
+        return None
+
+# 📋 Collecte des résultats
+resultats = []
+
+# 🚀 Traitement principal
 if uploaded_files:
-    st.success(f"✅ {len(uploaded_files)} image(s) chargée(s)")
-    if st.button("🚀 Lancer l'analyse"):
-        resultats = []
-        for fichier in uploaded_files:
-            st.write(f"Analyse de : **{fichier.name}**")
-            try:
-                # Lire l'image
-                image = Image.open(fichier)
-                buffered = BytesIO()
-                image.save(buffered, format="PNG")
-                file_bytes = buffered.getvalue()
+    with st.spinner("🔎 Analyse des fichiers en cours..."):
+        for file in uploaded_files:
+            if file.name.endswith((".png", ".jpg", ".jpeg")):
+                url = upload_et_get_url(file)
+                if url:
+                    analyse = analyser_image_url(url)
+                    if analyse:
+                        resultats.append({
+                            "NICAD": os.path.splitext(file.name)[0],
+                            "Type d'immeuble": analyse.get("type_immeuble", "Non précisé"),
+                            "Catégorie": analyse.get("categorie", "Non précisé"),
+                            "Niveaux": analyse.get("niveaux", "Non précisé"),
+                            "Description": analyse.get("description", "Non précisé")
+                        })
+            elif file.name.endswith((".xlsx", ".csv")):
+                df = pd.read_excel(file) if file.name.endswith(".xlsx") else pd.read_csv(file)
+                st.subheader(f"📄 Aperçu du fichier : {file.name}")
+                st.dataframe(df)
 
-                # Upload sur Dropbox
-                dropbox_url = upload_to_dropbox(file_bytes, fichier.name)
-                if not dropbox_url:
-                    continue
+# 📦 Export résultats
+if resultats:
+    df_resultats = pd.DataFrame(resultats)
+    st.subheader("📊 Résultats d'analyse")
+    st.dataframe(df_resultats)
 
-                # Appel OpenAI
-                analyse = analyser_batiment(dropbox_url)
-                if analyse:
-                    try:
-                        analyse_json = json.loads(analyse)
-                    except:
-                        st.error(f"⚠️ Format inattendu pour {fichier.name}")
-                        continue
+    nom_fichier = f"analyse_ia_cadastrale_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    chemin_fichier = os.path.join("resultats", nom_fichier)
 
-                    resultats.append({
-                        "NICAD": fichier.name.rsplit('.', 1)[0],
-                        "Type d'immeuble": analyse_json.get("type_immeuble", "Non précisé"),
-                        "Catégorie": analyse_json.get("categorie", "Non précisé"),
-                        "Niveaux": analyse_json.get("niveaux", "Non précisé"),
-                        "Description": analyse_json.get("description", "Non précisé")
-                    })
-            except Exception as e:
-                st.error(f"Erreur avec {fichier.name} : {e}")
+    os.makedirs("resultats", exist_ok=True)
+    df_resultats.to_excel(chemin_fichier, index=False)
 
-        if resultats:
-            df = pd.DataFrame(resultats)
-            st.dataframe(df)
-            # Export Excel
-            now = datetime.now().strftime("%Y%m%d%H%M%S")
-            output_path = f"resultats_ia_cadastrale_{now}.xlsx"
-            df.to_excel(output_path, index=False)
-            st.success("✅ Analyse terminée. Télécharger le fichier Excel ci-dessous :")
-            with open(output_path, "rb") as f:
-                st.download_button(label="📥 Télécharger le fichier Excel", data=f, file_name=output_path)
-        else:
-            st.error("❌ Aucun résultat exploitable.")
-else:
-    st.info("📂 Veuillez uploader un fichier pour commencer.")
+    with open(chemin_fichier, "rb") as f:
+        st.download_button(
+            label="📥 Télécharger les résultats en Excel",
+            data=f,
+            file_name=nom_fichier,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
+    st.success("✅ Analyse terminée et fichier prêt au téléchargement.")

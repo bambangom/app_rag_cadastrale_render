@@ -2,15 +2,13 @@ services:
   - type: web
     name: ia-cadastrale-rag
     env: python
-    plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "streamlit run app_rag_cadastrale_render.py --server.port $PORT"
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app_rag_cadastrale_render.py --server.port $PORT --server.address 0.0.0.0
     envVars:
       - key: OPENAI_API_KEY
-        sync: false
-    runtime: python
-    region: oregon
-    branch: main
-    repo: https://github.com/bambangom/app_rag_cadastrale_render.git
-    autoDeploy: true
+        sync: true
+      - key: DROPBOX_ACCESS_TOKEN
+        sync: true
+    plan: free
+
 
